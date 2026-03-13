@@ -1,0 +1,51 @@
+# A2OH Orchestrator Configuration
+
+# Project paths
+paths:
+  migration_root: /home/dspfac/android-to-openharmony-migration
+  api_compat_db: /home/dspfac/android-to-openharmony-migration/database/api_compat.db
+  shim_progress_db: /home/dspfac/a2oh-orchestrator/shim_progress.db
+  skills_dir: /home/dspfac/android-to-openharmony-migration/skills/per-api
+  shim_java_dir: /home/dspfac/android-to-openharmony-migration/shim/java
+  test_apps_dir: /home/dspfac/android-to-openharmony-migration/test-apps
+  # Isolated working directories for parallel workers
+  work_dir: /home/dspfac/a2oh-orchestrator/workdirs
+
+# Phase 1: Internal subagent mode
+phase1:
+  max_classes: 5
+  min_score: 8
+  # Run sequentially inside one CC session
+
+# Phase 2: External orchestrator mode
+phase2:
+  max_parallel_workers: 10
+  min_score: 5
+  max_retries: 3
+  # Claude API configuration
+  api:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    # model for complex tasks (Tier 2+)
+    model_complex: claude-sonnet-4-20250514
+    max_tokens: 16384
+    temperature: 0
+  # Alternative: Claude Code CLI mode
+  cli:
+    enabled: false
+    binary: claude
+    flags: "--dangerously-skip-permissions --model claude-sonnet-4-20250514"
+
+# Task queue settings
+queue:
+  claim_timeout_seconds: 600  # Release claim if worker dies after 10 min
+  batch_size: 50              # Number of tasks to queue per dispatch round
+
+# File isolation strategy
+isolation:
+  # Per-class bridge extension files instead of monolithic OHBridge.java
+  bridge_pattern: "shim/java/com/ohos/shim/bridge/ext/OHBridgeExt_{class_name}.java"
+  # Per-class test files instead of monolithic HeadlessTest.java
+  test_pattern: "test-apps/02-headless-cli/src/tests/Test_{class_name}.java"
+  # Per-class mock files
+  mock_pattern: "test-apps/mock/com/ohos/shim/bridge/ext/OHBridgeExt_{class_name}.java"
