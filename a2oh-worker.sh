@@ -1,5 +1,5 @@
 #!/bin/bash
-# a2oh-worker.sh — Launch a CC worker for distributed shim implementation
+# a2oh-worker.sh — Launch an AI worker for distributed shim implementation
 #
 # Usage:
 #   ./a2oh-worker.sh [WORKER_DIR] [BATCH_SIZE]
@@ -10,6 +10,13 @@
 #   ./a2oh-worker.sh /tmp/worker1 5           # Custom dir, batch=5
 #   TIER=b ./a2oh-worker.sh                   # Work on tier-b issues
 #   LOOP=1 ./a2oh-worker.sh                   # Keep picking up work until no todo left
+#   ENGINE=codex ./a2oh-worker.sh             # Use OpenAI Codex instead of Claude
+#
+# Environment variables:
+#   ENGINE   claude (default) or codex
+#   TIER     a (default), b, c, d
+#   LOOP     0 (default) or 1 for continuous mode
+#   MODEL    Override model (e.g. claude-sonnet-4-20250514, o3)
 
 set -euo pipefail
 
@@ -19,12 +26,16 @@ WORKER_DIR="${1:-/tmp/a2oh-worker-$$}"
 BATCH="${2:-10}"
 TIER="${TIER:-a}"
 LOOP="${LOOP:-0}"
+ENGINE="${ENGINE:-claude}"
+MODEL="${MODEL:-}"
 
 echo "=== A2OH Worker ==="
-echo "  Dir:   $WORKER_DIR"
-echo "  Batch: $BATCH"
-echo "  Tier:  $TIER"
-echo "  Loop:  $LOOP"
+echo "  Engine: $ENGINE"
+echo "  Dir:    $WORKER_DIR"
+echo "  Batch:  $BATCH"
+echo "  Tier:   $TIER"
+echo "  Loop:   $LOOP"
+[ -n "$MODEL" ] && echo "  Model:  $MODEL"
 echo ""
 
 # ─── Step 1: Ensure repo is cloned and up to date ────────────────────────────
@@ -66,11 +77,27 @@ for f in test-apps/run-local-tests.sh test-apps/mock/com/ohos/shim/bridge/OHBrid
     fi
 done
 
-# Check Claude Code
-if ! command -v claude &>/dev/null; then
-    echo "ERROR: claude CLI not found. Install: npm install -g @anthropic-ai/claude-code"
-    exit 1
-fi
+# Check AI engine
+case "$ENGINE" in
+    claude)
+        if ! command -v claude &>/dev/null; then
+            echo "ERROR: claude CLI not found. Install: npm install -g @anthropic-ai/claude-code"
+            exit 1
+        fi
+        echo "  claude $(claude --version 2>/dev/null || echo '?')"
+        ;;
+    codex)
+        if ! command -v codex &>/dev/null; then
+            echo "ERROR: codex CLI not found. Install: npm install -g @openai/codex"
+            exit 1
+        fi
+        echo "  codex $(codex --version 2>/dev/null || echo '?')"
+        ;;
+    *)
+        echo "ERROR: Unknown ENGINE=$ENGINE. Use 'claude' or 'codex'."
+        exit 1
+        ;;
+esac
 
 # ─── Step 3: Verify test baseline ────────────────────────────────────────────
 
@@ -78,7 +105,7 @@ echo "[3/3] Running test baseline..."
 BASELINE=$(bash test-apps/run-local-tests.sh headless 2>&1 | grep -E '^Passed:' | head -1 || true)
 echo "  Baseline: $BASELINE"
 
-# ─── Step 4: Launch CC in auto mode ──────────────────────────────────────────
+# ─── Step 4: Build prompt and launch ─────────────────────────────────────────
 
 PROMPT="Read CLAUDE.md for full instructions. You are a distributed worker.
 
@@ -110,9 +137,25 @@ Then close each issue:
 
 IMPORTANT: Do NOT add Co-Authored-By lines to commits."
 
+# Build engine-specific command
+build_cmd() {
+    case "$ENGINE" in
+        claude)
+            CMD=(claude --dangerously-skip-permissions -p "$PROMPT")
+            [ -n "$MODEL" ] && CMD+=(--model "$MODEL")
+            ;;
+        codex)
+            CMD=(codex --dangerously-bypass-approvals-and-sandbox -q "$PROMPT")
+            [ -n "$MODEL" ] && CMD+=(--model "$MODEL")
+            ;;
+    esac
+}
+
+build_cmd
+
 if [ "$LOOP" = "1" ]; then
     echo ""
-    echo "=== LOOP MODE: Will keep picking up work until no todo issues remain ==="
+    echo "=== LOOP MODE ($ENGINE): Will keep picking up work until no todo issues remain ==="
     while true; do
         # Check if there are any todo issues left
         TODO_COUNT=$(gh issue list --repo "$REPO_SLUG" --label todo --label "tier-$TIER" --limit 1 --json number 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
@@ -121,14 +164,14 @@ if [ "$LOOP" = "1" ]; then
             break
         fi
         echo ""
-        echo "=== Starting CC worker session ($(date)) ==="
+        echo "=== Starting $ENGINE worker session ($(date)) ==="
         git fetch origin && git reset --hard origin/main
-        claude --dangerously-skip-permissions -p "$PROMPT" || true
+        "${CMD[@]}" || true
         echo "=== Session ended, checking for more work... ==="
         sleep 5
     done
 else
     echo ""
-    echo "=== Launching CC worker ==="
-    claude --dangerously-skip-permissions -p "$PROMPT"
+    echo "=== Launching $ENGINE worker ==="
+    "${CMD[@]}"
 fi

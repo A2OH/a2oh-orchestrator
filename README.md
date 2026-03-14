@@ -77,15 +77,20 @@ Arguments:
   BATCH_SIZE   Number of issues to claim per CC session (default: 10)
 
 Environment variables:
+  ENGINE       AI engine: claude (default) or codex
   TIER         Which tier to work on: a, b, c, d (default: a)
   LOOP         Set to 1 for continuous mode (default: 0)
+  MODEL        Override model (e.g. claude-sonnet-4-20250514, o3)
 ```
 
 ### Examples
 
 ```bash
-# Basic — claim 10 Tier A issues, implement, close
+# Basic — claim 10 Tier A issues with Claude Code
 ./a2oh-worker.sh /tmp/worker1
+
+# Use OpenAI Codex instead
+ENGINE=codex ./a2oh-worker.sh /tmp/worker1
 
 # Custom batch size
 ./a2oh-worker.sh /tmp/worker1 5
@@ -93,13 +98,16 @@ Environment variables:
 # Work on Tier B issues
 TIER=b ./a2oh-worker.sh /tmp/worker1
 
+# Codex with specific model, loop mode
+ENGINE=codex MODEL=o3 LOOP=1 ./a2oh-worker.sh /tmp/worker1
+
 # Tier C, loop mode, batch of 5
 TIER=c LOOP=1 ./a2oh-worker.sh /tmp/worker1 5
 
-# Three parallel workers on Tier A
-./a2oh-worker.sh /tmp/w1 10 &
-./a2oh-worker.sh /tmp/w2 10 &
-./a2oh-worker.sh /tmp/w3 10 &
+# Mix engines across parallel workers
+ENGINE=claude ./a2oh-worker.sh /tmp/w1 10 &
+ENGINE=codex  ./a2oh-worker.sh /tmp/w2 10 &
+ENGINE=claude ./a2oh-worker.sh /tmp/w3 10 &
 ```
 
 ### What the Script Does
@@ -114,14 +122,15 @@ Step 2: VERIFY PREREQUISITES
   ├── javac (JDK 8+)
   ├── gh auth status
   ├── Test infrastructure files exist
-  └── claude CLI installed
+  └── AI engine installed (claude or codex)
 
 Step 3: RUN TEST BASELINE
   └── test-apps/run-local-tests.sh headless → expects 497/502 pass
 
-Step 4: LAUNCH CLAUDE CODE
-  └── claude --dangerously-skip-permissions -p "<prompt>"
-       ├── Claims up to BATCH_SIZE issues (gh issue edit --remove-label todo --add-label in-progress)
+Step 4: LAUNCH AI ENGINE
+  ├── Claude: claude --dangerously-skip-permissions -p "<prompt>"
+  └── Codex:  codex --dangerously-bypass-approvals-and-sandbox -q "<prompt>"
+       ├── Claims up to BATCH_SIZE issues
        ├── Launches parallel subagents (one per shim class)
        ├── Each agent: reads stub → reads skill file → implements real Java logic
        ├── Verifies test baseline holds
@@ -131,39 +140,57 @@ Step 4: LAUNCH CLAUDE CODE
 Step 5: LOOP (if LOOP=1)
   ├── Checks for remaining todo issues
   ├── git fetch + reset to latest main
-  ├── Re-launches CC
+  ├── Re-launches engine
   └── Stops when no todo issues left
 ```
 
 ### Prerequisites
 
-| Tool | Version | Check |
-|------|---------|-------|
-| Java JDK | 8+ (21 works) | `javac -version` |
-| GitHub CLI | Any | `gh auth status` |
-| Claude Code | Latest | `claude --version` |
-| Git | Any | `git --version` |
+| Tool | Version | Check | Required |
+|------|---------|-------|----------|
+| Java JDK | 8+ (21 works) | `javac -version` | Always |
+| GitHub CLI | Any | `gh auth status` | Always |
+| Git | Any | `git --version` | Always |
+| Claude Code | Latest | `claude --version` | If ENGINE=claude |
+| Codex CLI | Latest | `codex --version` | If ENGINE=codex |
 
-Install Claude Code:
 ```bash
+# Install Claude Code
 npm install -g @anthropic-ai/claude-code
+
+# Install Codex CLI
+npm install -g @openai/codex
 ```
 
 ---
 
 ## Running Without the Script
 
-If you prefer to invoke CC directly:
+If you prefer to invoke the engine directly:
 
 ```bash
 cd /path/to/harmony-android-guide
 
+# Claude Code
 claude --dangerously-skip-permissions -p "
 Read CLAUDE.md. Claim up to 10 open tier-a todo issues from A2OH/harmony-android-guide.
 Implement each shim with real Java logic, verify 497/502 baseline holds, close as done.
 Use parallel agents (5 at a time).
 Do NOT add Co-Authored-By lines to commits."
+
+# OpenAI Codex
+codex --dangerously-bypass-approvals-and-sandbox -q "
+Read CLAUDE.md. Claim up to 10 open tier-a todo issues from A2OH/harmony-android-guide.
+Implement each shim with real Java logic, verify 497/502 baseline holds, close as done.
+Use parallel agents (5 at a time).
+Do NOT add Co-Authored-By lines to commits."
 ```
+
+| Flag | Claude Code | Codex CLI |
+|------|------------|-----------|
+| Auto-approve all | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` (alias: `--yolo`) |
+| Non-interactive prompt | `-p "..."` | `-q "..."` |
+| Model override | `--model <model>` | `--model <model>` |
 
 ---
 
